@@ -44,68 +44,6 @@ interface CCTVCamera {
   isActive: boolean;
 }
 
-// ✅ 실제 위도/경도(대한민국 주요 도시 예시)
-// const mockPeople: Person[] = [
-//   {
-//     id: "1",
-//     name: "Sarah Martinez",
-//     status: "missing",
-//     lat: 37.5665, lng: 126.9780, // 서울
-//     phone: "+1 (555) 123-4567",
-//     lastSeen: "6 hours ago",
-//     age: 28,
-//     description: "5'6\", brown hair, wearing blue jacket and jeans",
-//     reportedBy: "Maria Martinez (Sister)",
-//     caseNumber: "MP-2024-001"
-//   },
-//   {
-//     id: "2",
-//     name: "James Wilson",
-//     status: "missing",
-//     lat: 37.2636, lng: 127.0286, // 수원
-//     phone: "+1 (555) 234-5678",
-//     lastSeen: "2 days ago",
-//     age: 34,
-//     description: "6'2\", blonde hair, last seen in downtown area",
-//     reportedBy: "Lisa Wilson (Wife)",
-//     caseNumber: "MP-2024-002"
-//   },
-//   {
-//     id: "3",
-//     name: "Emily Chen",
-//     status: "found",
-//     lat: 36.3504, lng: 127.3845, // 대전
-//     phone: "+1 (555) 345-6789",
-//     lastSeen: "Found 30 min ago",
-//     age: 16,
-//     description: "5'4\", black hair, school uniform",
-//     reportedBy: "David Chen (Father)",
-//     caseNumber: "MP-2024-003"
-//   },
-//   {
-//     id: "4",
-//     name: "Michael Rodriguez",
-//     status: "searching",
-//     lat: 35.8714, lng: 128.6014, // 대구
-//     lastSeen: "12 hours ago",
-//     age: 45,
-//     description: "5'10\", gray hair, wearing work clothes",
-//     reportedBy: "Construction Site Manager",
-//     caseNumber: "MP-2024-004"
-//   },
-//   {
-//     id: "5",
-//     name: "Ashley Thompson",
-//     status: "missing",
-//     lat: 35.1796, lng: 129.0756, // 부산
-//     phone: "+1 (555) 456-7890",
-//     lastSeen: "4 hours ago",
-//     age: 22,
-//     description: "5'7\", red hair, wearing green dress",
-//     reportedBy: "College Roommate",
-//     caseNumber: "MP-2024-005"
-//   }
-// ];
 const API_BASE = import.meta.env.VITE_API_BASE as string;
 
 const mockVehicles: Vehicle[] = [
