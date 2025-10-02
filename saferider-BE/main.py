@@ -3,6 +3,7 @@ import os, asyncio, time
 from typing import List, Optional, Dict, Any
 from fastapi import FastAPI, Body
 from pydantic import BaseModel
+from typing import List
 from fastapi.middleware.cors import CORSMiddleware
 import httpx
 from dotenv import load_dotenv
@@ -94,13 +95,20 @@ async def geocode(client: httpx.AsyncClient, addr:str):
     cache_set(addr, coord)
     return coord
 
+class MissingResponse(BaseModel):
+    total: int
+    page: int
+    rowSize: int
+    people: List[Person]
+
 # --------- 엔드포인트 ---------
-@app.post("/api/missing", response_model=List[Person])
+@app.post("/api/missing", response_model=MissingResponse)
 async def list_missing(req: Req = Body(...)):
     date = req.date or time.strftime("%Y%m%d")  # 오늘 기본
     async with httpx.AsyncClient() as client:
         data = await fetch_safe182(client, date, req.rowSize, req.page)
-        items = data.get("list") if isinstance(data, dict) else None
+        items = data.get("list") if isinstance(data, dict) else []
+        total = int(data.get("totalCount", len(items) if items else 0))
         if not isinstance(items, list):
             # XML 등 비정형 응답 방어
             return []
@@ -131,4 +139,9 @@ async def list_missing(req: Req = Body(...)):
                 description=it.get("etcSpfeatr"),
                 age=age
             ))
-        return people
+        return MissingResponse(
+            total=total,
+            page=req.page,
+            rowSize=req.rowSize,
+            people=people,
+        )
