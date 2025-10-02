@@ -128,15 +128,18 @@ export function MapView({ people, selectedPerson, onPersonSelect }: MapViewProps
     markersRef.current = [];
     overlaysRef.current = [];
 
-    people.forEach((p) => {
-      const pos = new window.kakao.maps.LatLng(p.lat, p.lng);
-      const selected = selectedPerson?.id === p.id;
+   people.forEach((p) => {
+    const lat = Number(p.lat), lng = Number(p.lng);
+    if (Number.isNaN(lat) || Number.isNaN(lng)) return;
 
-      const marker = new window.kakao.maps.Marker({
-        position: pos,
-        image: markerImageFor(p.status, selected),
-        zIndex: selected ? 5 : 3,
-      });
+    const pos = new window.kakao.maps.LatLng(lat, lng);
+    const selected = selectedPerson?.id === p.id;
+
+    const marker = new window.kakao.maps.Marker({
+      position: pos,
+      image: markerImageFor(p.status, selected),
+      zIndex: selected ? 5 : 3,
+    });
       marker.setMap(mapObj.current);
       window.kakao.maps.event.addListener(marker, "click", () => onPersonSelect(p));
       markersRef.current.push(marker);
@@ -152,26 +155,30 @@ export function MapView({ people, selectedPerson, onPersonSelect }: MapViewProps
     });
     const bounds = new window.kakao.maps.LatLngBounds();
 people.forEach(p => bounds.extend(new window.kakao.maps.LatLng(p.lat, p.lng)));
-if (people.length) {
-  mapObj.current.setBounds(bounds, 50, 50, 50, 50); // 좌상우하 패딩(px)
+if (!selectedPerson && people.length) {
+  const bounds = new window.kakao.maps.LatLngBounds();
+  people.forEach((p) => {
+    const lat = Number(p.lat), lng = Number(p.lng);
+    if (!Number.isNaN(lat) && !Number.isNaN(lng)) {
+      bounds.extend(new window.kakao.maps.LatLng(lat, lng));
+    }
+  });
+  if (!bounds.isEmpty()) {
+    mapObj.current.setBounds(bounds, 50, 50, 50, 50);
+  }
 }
   }, [people, selectedPerson, onPersonSelect]);
 
   // 3) 선택 변경 시 센터 이동
-  useEffect(() => {
-    if (!mapObj.current) return;
-    const ro = new ResizeObserver(() => {
-      mapObj.current.relayout();
-      if (selectedPerson) {
-        const c = new window.kakao.maps.LatLng(selectedPerson.lat, selectedPerson.lng);
-        mapObj.current.setCenter(c);
-      }
-    });
-    if (mapRef.current) ro.observe(mapRef.current);
-    // 최초 1회 강제
-    setTimeout(() => mapObj.current && mapObj.current.relayout(), 0);
-    return () => ro.disconnect();
-  }, [selectedPerson]);
+useEffect(() => {
+  if (!mapObj.current || !selectedPerson || !window.kakao?.maps) return;
+  const lat = Number(selectedPerson.lat), lng = Number(selectedPerson.lng);
+  if (Number.isNaN(lat) || Number.isNaN(lng)) return;
+  const pos = new window.kakao.maps.LatLng(lat, lng);
+  mapObj.current.relayout();
+  mapObj.current.setLevel(6);
+  mapObj.current.panTo(pos);
+}, [selectedPerson]);
 
   return (
     <div className="relative h-full border rounded-lg overflow-hidden">

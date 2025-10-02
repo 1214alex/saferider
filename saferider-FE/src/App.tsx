@@ -1,4 +1,4 @@
-import { useEffect,useState } from "react";
+import { useEffect,useState, useMemo } from "react";
 import { MapView } from "./components/MapView";
 import { PeopleSidebar } from "./components/PeopleSidebar";
 import { NearbyVehicles } from "./components/NearbyVehicles";
@@ -71,6 +71,37 @@ export default function App() {
   const [selectedPerson, setSelectedPerson] = useState<Person | null>(null);
 
   const [activeView, setActiveView] = useState<"map" | "cctv">("map");
+    // 검색 + 페이징 상태
+  const [q, setQ] = useState("");
+  const [page, setPage] = useState(1);
+  const pageSize = 5;
+
+  // 필터링
+  const filtered = useMemo(() => {
+    const s = q.trim().toLowerCase();
+    if (!s) return people;
+    return people.filter(p => p.name.toLowerCase().includes(s));
+  }, [people, q]);
+
+  // 페이지 슬라이스
+  const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
+  const pagePeople = useMemo(() => {
+    const start = (page - 1) * pageSize;
+    return filtered.slice(start, start + pageSize);
+  }, [filtered, page]);
+
+    // 검색어가 바뀌면 1페이지로
+  useEffect(() => {
+    setPage(1);
+  }, [q]);
+
+  // 페이지 사람이 바뀌면 선택 보정
+  useEffect(() => {
+    if (!pagePeople.length) { setSelectedPerson(null); return; }
+    if (!selectedPerson || !pagePeople.some(p => p.id === selectedPerson.id)) {
+      setSelectedPerson(pagePeople[0]);
+    }
+  }, [pagePeople, selectedPerson]);
   useEffect(() => {
     (async () => {
       try {
@@ -103,15 +134,36 @@ export default function App() {
               {/* ✅ 지도 컨테이너에 최소 높이 보장 */}
               <div className="flex-1 min-h-[560px]">
                 <MapView
-                  people={people}
+                  people={pagePeople}
                   selectedPerson={selectedPerson}
                   onPersonSelect={handlePersonSelect}
                 />
               </div>
 
               <div className="w-80 flex flex-col">
+                <div className="p-2 border rounded-lg bg-white mb-2">
+                  <input
+                    value={q}
+                    onChange={(e) => setQ(e.target.value)}
+                    placeholder="이름 검색"
+                    className="w-full px-3 py-2 text-sm border rounded-md outline-none"
+                  />
+                  <div className="mt-2 flex items-center justify-between">
+                    <button
+                      className="px-3 py-1 text-sm border rounded disabled:opacity-40"
+                      onClick={() => setPage(p => Math.max(1, p - 1))}
+                      disabled={page <= 1}
+                    >이전</button>
+                    <div className="text-sm">{page} / {totalPages}</div>
+                    <button
+                      className="px-3 py-1 text-sm border rounded disabled:opacity-40"
+                      onClick={() => setPage(p => Math.min(totalPages, p + 1))}
+                      disabled={page >= totalPages}
+                    >다음</button>
+                  </div>
+                </div>
                 <PeopleSidebar
-                  people={people}
+                  people={pagePeople}
                   selectedPerson={selectedPerson}
                   onPersonSelect={handlePersonSelect}
                 />
