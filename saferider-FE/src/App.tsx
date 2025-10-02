@@ -1,9 +1,9 @@
 import { useEffect,useState } from "react";
-import { MapView } from "./components/MapView";
-import { PeopleSidebar } from "./components/PeopleSidebar";
-import { NearbyVehicles } from "./components/NearbyVehicles";
-import { NavigationSidebar } from "./components/NavigationSidebar";
-import { CCTVPage } from "./components/CCTVPage";
+import { MapView } from "../components/MapView";
+import { PeopleSidebar } from "../components/PeopleSidebar";
+import { NearbyVehicles } from "../components/NearbyVehicles";
+import { NavigationSidebar } from "../components/NavigationSidebar";
+import { CCTVPage } from "../components/CCTVPage";
 
 interface Person {
   id: string;
