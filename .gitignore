@@ -1,0 +1,5 @@
+node_modules
+.env
+abc
+__pycache__
+missing_persons.db

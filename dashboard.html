@@ -1,0 +1,1163 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>실종자 알림 시스템 관리자</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Noto Sans KR', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: #f8fafc;
+            color: #334155;
+        }
+        
+        .header {
+            background: linear-gradient(135deg, #1e40af, #3b82f6);
+            color: white;
+            padding: 1rem 2rem;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            z-index: 1000;
+            height: 70px;
+        }
+        
+        .header-content {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            height: 100%;
+        }
+        
+        .header h1 {
+            font-size: 1.5rem;
+            font-weight: 700;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+        
+        .status-indicator {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            background: #10b981;
+            animation: pulse 2s infinite;
+        }
+        
+        .status-indicator.disconnected {
+            background: #ef4444;
+        }
+        
+        .header-stats {
+            display: flex;
+            gap: 2rem;
+            font-size: 0.9rem;
+        }
+        
+        .stat-item {
+            text-align: center;
+        }
+        
+        .stat-value {
+            font-size: 1.2rem;
+            font-weight: 700;
+            display: block;
+        }
+        
+        .stat-label {
+            font-size: 0.8rem;
+            opacity: 0.9;
+        }
+        
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        
+        .main-container {
+            display: flex;
+            height: 100vh;
+            padding-top: 70px;
+        }
+        
+        .sidebar {
+            width: 350px;
+            background: white;
+            border-left: 1px solid #e2e8f0;
+            overflow-y: auto;
+            flex-shrink: 0;
+            order: 2;
+        }
+        
+        .content-area {
+            flex: 1;
+            height: 100%;
+            order: 1;
+            position: relative;
+        }
+        
+        .map-placeholder {
+            width: 100%;
+            height: 100%;
+            background: #f0f0f0;
+            position: relative;
+        }
+        
+        #map {
+            width: 100%;
+            height: 100%;
+            display: none;
+        }
+        
+        .map-overlay {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            z-index: 100;
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+            pointer-events: none;
+        }
+        
+        .map-overlay > * {
+            pointer-events: auto;
+        }
+        
+        .map-status-panel {
+            background: rgba(255, 255, 255, 0.95);
+            padding: 12px 15px;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            backdrop-filter: blur(10px);
+            font-size: 0.875rem;
+        }
+        
+        .api-key-setup {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: white;
+            padding: 2rem;
+            border-radius: 12px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            max-width: 400px;
+            text-align: center;
+            z-index: 10;
+        }
+        
+        .api-key-setup h3 {
+            color: #1e293b;
+            margin-bottom: 1rem;
+        }
+        
+        .api-key-setup code {
+            background: #f1f5f9;
+            padding: 0.25rem 0.5rem;
+            border-radius: 4px;
+            font-family: monospace;
+        }
+        
+        .test-buttons {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+        
+        .test-btn {
+            background: white;
+            border: 1px solid #e2e8f0;
+            border-radius: 6px;
+            padding: 8px 16px;
+            cursor: pointer;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            font-size: 12px;
+            font-weight: 500;
+            transition: all 0.2s;
+            min-width: 120px;
+        }
+        
+        .test-btn:hover {
+            background: #f8fafc;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.15);
+        }
+        
+        .test-btn.loading {
+            opacity: 0.7;
+            cursor: not-allowed;
+        }
+        
+        .sidebar-section {
+            padding: 1.5rem;
+            border-bottom: 1px solid #e2e8f0;
+        }
+        
+        .section-title {
+            font-size: 1.1rem;
+            font-weight: 600;
+            margin-bottom: 1rem;
+            color: #1e293b;
+        }
+        
+        .person-list {
+            max-height: 400px;
+            overflow-y: auto;
+        }
+        
+        .person-item {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+            padding: 1rem;
+            margin-bottom: 0.75rem;
+            background: #f8fafc;
+            border-radius: 8px;
+            border-left: 4px solid #e2e8f0;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+        
+        .person-item:hover {
+            background: #f1f5f9;
+            transform: translateX(2px);
+        }
+        
+        .person-item.high-priority {
+            border-left-color: #ef4444;
+            background: #fef2f2;
+        }
+        
+        .person-item.selected {
+            border-left-color: #3b82f6;
+            background: #eff6ff;
+            box-shadow: 0 2px 4px rgba(59, 130, 246, 0.1);
+        }
+        
+        .person-item.new {
+            animation: highlight 3s ease-out;
+            border-left-color: #10b981;
+            background: #f0fdf4;
+        }
+        
+        @keyframes highlight {
+            0% { box-shadow: 0 0 20px rgba(16, 185, 129, 0.5); }
+            100% { box-shadow: none; }
+        }
+        
+        .person-marker {
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: bold;
+            color: white;
+            flex-shrink: 0;
+            font-size: 0.8rem;
+        }
+        
+        .person-marker.high {
+            background: linear-gradient(135deg, #ef4444, #dc2626);
+        }
+        
+        .person-marker.medium {
+            background: linear-gradient(135deg, #f59e0b, #d97706);
+        }
+        
+        .person-info {
+            flex: 1;
+            min-width: 0;
+        }
+        
+        .person-name {
+            font-weight: 600;
+            color: #1e293b;
+            margin-bottom: 0.25rem;
+        }
+        
+        .person-details {
+            font-size: 0.875rem;
+            color: #64748b;
+            line-height: 1.4;
+        }
+        
+        .risk-tags {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.25rem;
+            margin-top: 0.5rem;
+        }
+        
+        .risk-tag {
+            background: #ef4444;
+            color: white;
+            padding: 0.125rem 0.5rem;
+            border-radius: 12px;
+            font-size: 0.7rem;
+            font-weight: 500;
+        }
+        
+        .notification-panel {
+            background: #f8fafc;
+        }
+        
+        .notification-form {
+            display: flex;
+            flex-direction: column;
+            gap: 1rem;
+        }
+        
+        .form-group {
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+        }
+        
+        .form-label {
+            font-weight: 500;
+            color: #374151;
+            font-size: 0.9rem;
+        }
+        
+        .form-input, .form-select {
+            padding: 0.75rem;
+            border: 1px solid #d1d5db;
+            border-radius: 6px;
+            font-size: 0.875rem;
+        }
+        
+        .form-input:focus, .form-select:focus {
+            outline: none;
+            border-color: #3b82f6;
+            box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+        }
+        
+        .btn {
+            padding: 0.75rem 1.5rem;
+            border: none;
+            border-radius: 6px;
+            font-size: 0.875rem;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+        
+        .btn-primary {
+            background: #3b82f6;
+            color: white;
+        }
+        
+        .btn-primary:hover {
+            background: #2563eb;
+        }
+        
+        .btn-secondary {
+            background: #6b7280;
+            color: white;
+        }
+        
+        .btn-secondary:hover {
+            background: #4b5563;
+        }
+        
+        .activity-log {
+            max-height: 300px;
+            overflow-y: auto;
+        }
+        
+        .activity-item {
+            padding: 0.75rem;
+            border-bottom: 1px solid #e2e8f0;
+            font-size: 0.875rem;
+        }
+        
+        .activity-item:last-child {
+            border-bottom: none;
+        }
+        
+        .activity-time {
+            color: #64748b;
+            font-size: 0.75rem;
+        }
+        
+        .activity-content {
+            color: #1e293b;
+            margin-top: 0.25rem;
+        }
+        
+        .loading {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.5rem;
+            padding: 2rem;
+            color: #6b7280;
+        }
+        
+        .spinner {
+            width: 20px;
+            height: 20px;
+            border: 2px solid #e5e7eb;
+            border-top: 2px solid #3b82f6;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        .toast {
+            position: fixed;
+            top: 90px;
+            right: 20px;
+            background: white;
+            border-left: 4px solid #10b981;
+            padding: 1rem 1.5rem;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+            z-index: 1100;
+            transform: translateX(100%);
+            transition: transform 0.3s ease;
+            max-width: 300px;
+        }
+        
+        .toast.show {
+            transform: translateX(0);
+        }
+        
+        .toast.error {
+            border-left-color: #ef4444;
+        }
+        
+        .result-display {
+            margin-top: 1rem;
+            padding: 1rem;
+            background: #f8fafc;
+            border-radius: 6px;
+            border: 1px solid #e2e8f0;
+            font-family: monospace;
+            font-size: 0.875rem;
+            white-space: pre-wrap;
+            max-height: 200px;
+            overflow-y: auto;
+        }
+        
+        @media (max-width: 768px) {
+            .main-container {
+                flex-direction: column;
+            }
+            
+            .sidebar {
+                width: 100%;
+                height: 40vh;
+            }
+            
+            .content-area {
+                height: 60vh;
+            }
+            
+            .header-stats {
+                display: none;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <div class="header-content">
+            <h1>
+                <span class="status-indicator" id="connectionStatus"></span>
+                실종자 알림 시스템 관리자
+            </h1>
+            <div class="header-stats">
+                <div class="stat-item">
+                    <span class="stat-value" id="totalActive">0</span>
+                    <span class="stat-label">활성 실종자</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-value" id="highPriority">0</span>
+                    <span class="stat-label">고위험군</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-value" id="todayRequests">0</span>
+                    <span class="stat-label">API 요청</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-value" id="firebaseStatus">-</span>
+                    <span class="stat-label">Firebase</span>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="main-container">
+        <div class="sidebar">
+            <div class="sidebar-section">
+                <h2 class="section-title">실종자 목록</h2>
+                <div class="person-list" id="personList">
+                    <div class="loading">
+                        <div class="spinner"></div>
+                        실종자 정보를 불러오는 중...
+                    </div>
+                </div>
+            </div>
+            
+            <div class="sidebar-section notification-panel">
+                <h2 class="section-title">알림 전송 테스트</h2>
+                <form class="notification-form" id="notificationForm">
+                    <div class="form-group">
+                        <label class="form-label">실종자 선택</label>
+                        <select class="form-select" id="personSelect">
+                            <option value="">실종자를 선택하세요</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">알림 방식</label>
+                        <select class="form-select" id="notificationType">
+                            <option value="test">테스트 전송</option>
+                            <option value="real">실제 전송</option>
+                        </select>
+                    </div>
+                    <button type="submit" class="btn btn-primary">알림 전송</button>
+                </form>
+                <div id="notificationResult"></div>
+            </div>
+            
+            <div class="sidebar-section">
+                <h2 class="section-title">실시간 활동</h2>
+                <div class="activity-log" id="activityLog">
+                    <div class="activity-item">
+                        <div class="activity-time">시스템 시작</div>
+                        <div class="activity-content">실시간 모니터링을 시작합니다</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="content-area">
+            <div class="map-placeholder">
+                <!-- 왼쪽 테스트 버튼들 -->
+                <div style="position: absolute; top: 20px; left: 20px; z-index: 200;">
+                    <div class="test-buttons">
+                        <button class="test-btn" onclick="testAPI()">API 테스트</button>
+                        <button class="test-btn" onclick="testFirebase()">Firebase 테스트</button>
+                        <button class="test-btn" onclick="testTokens()">토큰 목록</button>
+                        <button class="test-btn" onclick="testStatistics()">통계 확인</button>
+                        <button class="test-btn" onclick="createTestToken()">테스트 토큰 생성</button>
+                        <button class="test-btn" onclick="initKakaoMap()">카카오맵 초기화</button>
+                    </div>
+                </div>
+                
+                <!-- 지도 상태 패널 (오른쪽 상단) -->
+                <div class="map-overlay" id="mapOverlay" style="display: none; top: 20px; right: 20px; left: auto;">
+                    <div class="map-status-panel">
+                        <h4 style="margin: 0 0 8px 0; color: #1e293b; font-size: 0.9rem;">지도 상태</h4>
+                        <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 5px;">
+                            <span class="status-indicator" id="mapStatus"></span>
+                            <span id="mapStatusText" style="font-size: 0.8rem;">지도 준비 완료</span>
+                        </div>
+                        <div style="font-size: 0.75rem; color: #64748b;" id="markerCount">마커: 0개</div>
+                    </div>
+                </div>
+                
+                <div id="map"></div>
+                
+                <div class="api-key-setup" id="apiKeySetup">
+                    <h3>카카오 지도 로딩 중...</h3>
+                    <p>카카오 지도를 초기화하고 있습니다. 잠시만 기다려주세요.</p>
+                    <div style="margin-top: 1rem; text-align: center;">
+                        <div class="spinner"></div>
+                    </div>
+                </div>
+                
+                <div id="testResults" class="result-display" style="display: none;"></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        class AdminDashboard {
+            constructor() {
+                this.ws = null;
+                this.persons = [];
+                this.selectedPerson = null;
+                this.isConnected = false;
+                this.map = null;
+                this.geocoder = null;
+                this.markers = [];
+                this.kakaoApiKey = '96d898faf99c8f9412bd94f61a3a8763';
+                
+                this.initWebSocket();
+                this.initEventListeners();
+                this.loadInitialData();
+                this.loadKakaoMapScript();
+                
+                setInterval(() => this.updateStats(), 30000);
+            }
+            
+            loadKakaoMapScript() {
+                if (!this.kakaoApiKey) {
+                    this.showToast('카카오 API 키가 설정되지 않았습니다.', 'error');
+                    return;
+                }
+
+                const existingScript = document.querySelector('script[src*="dapi.kakao.com"]');
+                if (existingScript) {
+                    existingScript.remove();
+                }
+
+                const script = document.createElement('script');
+                script.type = 'text/javascript';
+                script.src = `https://dapi.kakao.com/v2/maps/sdk.js?appkey=${this.kakaoApiKey}&libraries=services&autoload=false`;
+                
+                script.onload = () => {
+                    this.addActivity({
+                        time: new Date().toLocaleTimeString(),
+                        content: '카카오맵 스크립트가 로드되었습니다.'
+                    });
+                    
+                    if (window.kakao && window.kakao.maps) {
+                        kakao.maps.load(() => {
+                            this.addActivity({
+                                time: new Date().toLocaleTimeString(),
+                                content: '카카오맵 라이브러리 로드 완료.'
+                            });
+                            this.initializeKakaoMap();
+                        });
+                    } else {
+                        this.showToast('카카오맵 객체를 찾을 수 없습니다.', 'error');
+                    }
+                };
+                
+                script.onerror = () => {
+                    this.addActivity({
+                        time: new Date().toLocaleTimeString(),
+                        content: '카카오맵 스크립트 로드에 실패했습니다.'
+                    });
+                    this.showToast('카카오맵 스크립트 로드에 실패했습니다.', 'error');
+                };
+                
+                document.head.appendChild(script);
+            }
+            
+            initializeKakaoMap() {
+                if (typeof kakao === 'undefined') {
+                    this.showToast('카카오맵 API가 로드되지 않았습니다.', 'error');
+                    return;
+                }
+
+                try {
+                    const mapContainer = document.getElementById('map');
+                    const mapOption = {
+                        center: new kakao.maps.LatLng(36.3504119, 127.3845475),
+                        level: 8
+                    };
+
+                    this.map = new kakao.maps.Map(mapContainer, mapOption);
+                    this.geocoder = new kakao.maps.services.Geocoder();
+
+                    // UI 업데이트
+                    document.getElementById('apiKeySetup').style.display = 'none';
+                    document.getElementById('map').style.display = 'block';
+                    document.getElementById('mapOverlay').style.display = 'flex';
+                    document.getElementById('mapStatus').className = 'status-indicator';
+                    
+                    // 지도 크기 재조정
+                    setTimeout(() => {
+                        this.map.relayout();
+                    }, 100);
+                    
+                    this.addActivity({
+                        time: new Date().toLocaleTimeString(),
+                        content: '카카오맵이 성공적으로 초기화되었습니다.'
+                    });
+                    
+                    this.updateMapMarkers();
+                    this.showToast('카카오맵이 초기화되었습니다.', 'success');
+                } catch (error) {
+                    this.showToast('카카오맵 초기화 실패: ' + error.message, 'error');
+                }
+            }
+            
+            updateMapMarkers() {
+                if (!this.map) return;
+                
+                this.clearMarkers();
+                
+                this.persons.forEach((person, index) => {
+                    if (person.location) {
+                        this.addMarkerToMap(person, index);
+                    }
+                });
+                
+                document.getElementById('markerCount').textContent = `마커: ${this.markers.length}개`;
+            }
+            
+            clearMarkers() {
+                this.markers.forEach(marker => marker.setMap(null));
+                this.markers = [];
+            }
+            
+            addMarkerToMap(person, index) {
+                if (!this.geocoder) return;
+                
+                this.geocoder.addressSearch(person.location, (result, status) => {
+                    if (status === kakao.maps.services.Status.OK) {
+                        const coords = new kakao.maps.LatLng(result[0].y, result[0].x);
+                        this.createMarker(person, result[0].y, result[0].x);
+                        
+                        if (index === 0) {
+                            this.map.setCenter(coords);
+                            this.map.setLevel(3);
+                        }
+                    }
+                });
+            }
+            
+            createMarker(person, lat, lng) {
+                const position = new kakao.maps.LatLng(lat, lng);
+                
+                const marker = new kakao.maps.Marker({
+                    position: position,
+                    map: this.map
+                });
+
+                const infoContent = `
+                    <div style="padding:15px; min-width:250px;">
+                        <h4 style="margin:0 0 10px 0; color:#2c3e50;">${person.name || '이름 미상'}</h4>
+                        <div style="font-size:14px; color:#555; line-height:1.6;">
+                            <div><strong>나이:</strong> ${person.age || '미상'}세</div>
+                            <div><strong>우선순위:</strong> ${person.priority || 'MEDIUM'}</div>
+                            <div><strong>실종장소:</strong> ${person.location || '미상'}</div>
+                            ${person.risk_factors && person.risk_factors.length > 0 ? 
+                                `<div><strong>위험요소:</strong> ${person.risk_factors.join(', ')}</div>` : ''
+                            }
+                        </div>
+                    </div>
+                `;
+
+                const infoWindow = new kakao.maps.InfoWindow({
+                    content: infoContent,
+                    removable: true
+                });
+
+                kakao.maps.event.addListener(marker, 'click', () => {
+                    infoWindow.open(this.map, marker);
+                    this.selectPerson(person.id);
+                });
+
+                this.markers.push(marker);
+            }
+            
+            initWebSocket() {
+                const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+                const wsUrl = `${protocol}//${window.location.host}/ws`;
+                
+                this.ws = new WebSocket(wsUrl);
+                
+                this.ws.onopen = () => {
+                    console.log('WebSocket 연결됨');
+                    this.isConnected = true;
+                    this.updateConnectionStatus();
+                };
+                
+                this.ws.onmessage = (event) => {
+                    const message = JSON.parse(event.data);
+                    this.handleWebSocketMessage(message);
+                };
+                
+                this.ws.onclose = () => {
+                    console.log('WebSocket 연결 끊어짐');
+                    this.isConnected = false;
+                    this.updateConnectionStatus();
+                    
+                    setTimeout(() => this.initWebSocket(), 5000);
+                };
+                
+                this.ws.onerror = (error) => {
+                    console.error('WebSocket 오류:', error);
+                };
+            }
+            
+            updateConnectionStatus() {
+                const indicator = document.getElementById('connectionStatus');
+                if (this.isConnected) {
+                    indicator.classList.remove('disconnected');
+                } else {
+                    indicator.classList.add('disconnected');
+                }
+            }
+            
+            handleWebSocketMessage(message) {
+                console.log('받은 메시지:', message);
+                
+                switch (message.type) {
+                    case 'new_missing_person':
+                        this.handleNewMissingPerson(message.data, message.fcm_result);
+                        break;
+                    case 'manual_notification_sent':
+                        this.handleManualNotification(message.data);
+                        break;
+                }
+            }
+            
+            handleNewMissingPerson(person, fcmResult) {
+                this.persons.unshift(person);
+                this.renderPersonList();
+                this.updatePersonSelect();
+                this.updateMapMarkers();
+                
+                this.addActivity({
+                    time: new Date().toLocaleTimeString(),
+                    content: `새로운 실종자: ${person.name || '이름 미상'} (${person.location || '위치 미상'})`
+                });
+                
+                this.showToast(`새로운 실종자가 등록되었습니다: ${person.name || '이름 미상'}`, 'success');
+                this.updateStats();
+            }
+            
+            handleManualNotification(data) {
+                this.addActivity({
+                    time: new Date().toLocaleTimeString(),
+                    content: `수동 알림 전송: ${data.person.name || '이름 미상'} - ${data.result.success}/${data.result.total}`
+                });
+            }
+            
+            async loadInitialData() {
+                try {
+                    const response = await fetch('/api/missing_persons');
+                    const data = await response.json();
+                    this.persons = data.data || [];
+                    
+                    this.renderPersonList();
+                    this.updatePersonSelect();
+                    this.updateStats();
+                    this.updateMapMarkers();
+                } catch (error) {
+                    console.error('초기 데이터 로드 실패:', error);
+                    this.showToast('데이터 로드에 실패했습니다', 'error');
+                }
+            }
+            
+            renderPersonList() {
+                const container = document.getElementById('personList');
+                
+                if (!this.persons.length) {
+                    container.innerHTML = '<div style="text-align: center; padding: 2rem; color: #9ca3af;">등록된 실종자가 없습니다.</div>';
+                    return;
+                }
+                
+                const html = this.persons.map((person, index) => {
+                    const isNew = index === 0 && this.persons.length > 1;
+                    const priorityClass = person.priority === 'HIGH' ? 'high-priority' : '';
+                    const newClass = isNew ? 'new' : '';
+                    const selectedClass = this.selectedPerson === person.id ? 'selected' : '';
+                    
+                    const riskTags = (person.risk_factors || []).map(factor => 
+                        `<span class="risk-tag">${factor}</span>`
+                    ).join('');
+                    
+                    return `
+                        <div class="person-item ${priorityClass} ${newClass} ${selectedClass}" 
+                             onclick="admin.selectPerson('${person.id}')" data-person-id="${person.id}">
+                            <div class="person-marker ${(person.priority || 'medium').toLowerCase()}">
+                                !
+                            </div>
+                            <div class="person-info">
+                                <div class="person-name">
+                                    ${person.name || '이름 미상'} (${person.age || '나이 미상'}세)
+                                </div>
+                                <div class="person-details">
+                                    ${person.location || '위치 미상'}<br>
+                                    우선순위: ${person.priority || 'MEDIUM'}
+                                </div>
+                                ${riskTags ? `<div class="risk-tags">${riskTags}</div>` : ''}
+                            </div>
+                        </div>
+                    `;
+                }).join('');
+                
+                container.innerHTML = html;
+                
+                if (this.persons.length > 0) {
+                    setTimeout(() => {
+                        const firstItem = container.querySelector('.new');
+                        if (firstItem) {
+                            firstItem.classList.remove('new');
+                        }
+                    }, 3000);
+                }
+            }
+            
+            selectPerson(personId) {
+                this.selectedPerson = personId;
+                this.renderPersonList();
+                
+                const person = this.persons.find(p => p.id === personId);
+                if (person) {
+                    this.showToast(`선택됨: ${person.name || '이름 미상'}`, 'success');
+                    
+                    if (this.map && this.geocoder && person.location) {
+                        this.geocoder.addressSearch(person.location, (result, status) => {
+                            if (status === kakao.maps.services.Status.OK) {
+                                const coords = new kakao.maps.LatLng(result[0].y, result[0].x);
+                                this.map.setCenter(coords);
+                                this.map.setLevel(3);
+                            }
+                        });
+                    }
+                }
+            }
+            
+            updatePersonSelect() {
+                const select = document.getElementById('personSelect');
+                const currentValue = select.value;
+                
+                const options = this.persons.map(person => 
+                    `<option value="${person.id}">${person.name || '이름 미상'} (${person.age || '나이 미상'}세)</option>`
+                ).join('');
+                
+                select.innerHTML = '<option value="">실종자를 선택하세요</option>' + options;
+                
+                if (currentValue) {
+                    select.value = currentValue;
+                }
+            }
+            
+            addActivity(activity) {
+                const container = document.getElementById('activityLog');
+                const activityHtml = `
+                    <div class="activity-item">
+                        <div class="activity-time">${activity.time}</div>
+                        <div class="activity-content">${activity.content}</div>
+                    </div>
+                `;
+                
+                container.insertAdjacentHTML('afterbegin', activityHtml);
+                
+                const items = container.querySelectorAll('.activity-item');
+                if (items.length > 50) {
+                    items[items.length - 1].remove();
+                }
+            }
+            
+            async updateStats() {
+                try {
+                    const response = await fetch('/api/statistics');
+                    const stats = await response.json();
+                    
+                    document.getElementById('totalActive').textContent = stats.total_active;
+                    document.getElementById('highPriority').textContent = stats.high_priority;
+                    document.getElementById('todayRequests').textContent = stats.today_requests;
+                    document.getElementById('firebaseStatus').textContent = stats.firebase_status === '활성' ? '활성' : '비활성';
+                } catch (error) {
+                    console.error('통계 업데이트 실패:', error);
+                }
+            }
+            
+            initEventListeners() {
+                const form = document.getElementById('notificationForm');
+                form.addEventListener('submit', (e) => {
+                    e.preventDefault();
+                    this.sendManualNotification();
+                });
+            }
+            
+            async sendManualNotification() {
+                const personId = document.getElementById('personSelect').value;
+                const notificationType = document.getElementById('notificationType').value;
+                
+                if (!personId) {
+                    this.showToast('실종자를 선택해주세요.', 'error');
+                    return;
+                }
+                
+                const person = this.persons.find(p => p.id === personId);
+                if (!person) {
+                    this.showToast('실종자 정보를 찾을 수 없습니다.', 'error');
+                    return;
+                }
+                
+                try {
+                    const response = await fetch('/api/send_notification', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            person: person,
+                            target_tokens: notificationType === 'test' ? ['test_token'] : [],
+                            test_mode: notificationType === 'test'
+                        })
+                    });
+                    
+                    const result = await response.json();
+                    
+                    if (response.ok) {
+                        this.showToast(`알림 전송 완료: ${result.result.success}/${result.result.total}`, 'success');
+                        this.showResult('알림 전송 결과', result);
+                    } else {
+                        this.showToast(`전송 실패: ${result.detail}`, 'error');
+                    }
+                } catch (error) {
+                    this.showToast(`오류 발생: ${error.message}`, 'error');
+                }
+            }
+            
+            showToast(message, type = 'success') {
+                const toast = document.createElement('div');
+                toast.className = `toast ${type === 'error' ? 'error' : ''}`;
+                toast.textContent = message;
+                
+                document.body.appendChild(toast);
+                
+                setTimeout(() => toast.classList.add('show'), 100);
+                setTimeout(() => {
+                    toast.classList.remove('show');
+                    setTimeout(() => toast.remove(), 300);
+                }, 3000);
+            }
+            
+            showResult(title, data) {
+                const resultDiv = document.getElementById('testResults');
+                resultDiv.style.display = 'block';
+                resultDiv.innerHTML = `${title}:\n${JSON.stringify(data, null, 2)}`;
+                
+                setTimeout(() => {
+                    resultDiv.style.display = 'none';
+                }, 10000);
+            }
+        }
+        
+        let admin;
+        
+        async function testAPI() {
+            const btn = event.target;
+            btn.classList.add('loading');
+            btn.textContent = '테스트 중...';
+            
+            try {
+                const response = await fetch('/api/missing_persons');
+                const data = await response.json();
+                admin.showResult('API 테스트 결과', data);
+                admin.showToast('API 테스트 성공', 'success');
+            } catch (error) {
+                admin.showToast(`API 테스트 실패: ${error.message}`, 'error');
+            } finally {
+                btn.classList.remove('loading');
+                btn.textContent = 'API 테스트';
+            }
+        }
+        
+        async function testFirebase() {
+            const btn = event.target;
+            btn.classList.add('loading');
+            btn.textContent = '테스트 중...';
+            
+            try {
+                const response = await fetch('/api/send_notification', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        person: {
+                            id: 'test_001',
+                            name: '테스트 실종자',
+                            age: 30,
+                            priority: 'HIGH',
+                            location: '테스트 위치',
+                            risk_factors: ['테스트'],
+                            ner_entities: {}
+                        },
+                        target_tokens: ['test_token'],
+                        test_mode: true
+                    })
+                });
+                
+                const result = await response.json();
+                admin.showResult('Firebase 테스트 결과', result);
+                admin.showToast('Firebase 테스트 완료', 'success');
+            } catch (error) {
+                admin.showToast(`Firebase 테스트 실패: ${error.message}`, 'error');
+            } finally {
+                btn.classList.remove('loading');
+                btn.textContent = 'Firebase 테스트';
+            }
+        }
+        
+        async function testTokens() {
+            const btn = event.target;
+            btn.classList.add('loading');
+            btn.textContent = '확인 중...';
+            
+            try {
+                const response = await fetch('/api/test_tokens');
+                const data = await response.json();
+                admin.showResult('테스트 토큰 목록', data);
+                admin.showToast('토큰 목록 조회 완료', 'success');
+            } catch (error) {
+                admin.showToast(`토큰 조회 실패: ${error.message}`, 'error');
+            } finally {
+                btn.classList.remove('loading');
+                btn.textContent = '토큰 목록';
+            }
+        }
+        
+        async function testStatistics() {
+            const btn = event.target;
+            btn.classList.add('loading');
+            btn.textContent = '확인 중...';
+            
+            try {
+                const response = await fetch('/api/statistics');
+                const data = await response.json();
+                admin.showResult('시스템 통계', data);
+                admin.showToast('통계 조회 완료', 'success');
+            } catch (error) {
+                admin.showToast(`통계 조회 실패: ${error.message}`, 'error');
+            } finally {
+                btn.classList.remove('loading');
+                btn.textContent = '통계 확인';
+            }
+        }
+        
+        async function createTestToken() {
+            const btn = event.target;
+            btn.classList.add('loading');
+            btn.textContent = '생성 중...';
+            
+            try {
+                const response = await fetch('/api/register_test_token', {
+                    method: 'POST'
+                });
+                const data = await response.json();
+                admin.showResult('테스트 토큰 생성 결과', data);
+                admin.showToast('테스트 토큰 생성 완료', 'success');
+            } catch (error) {
+                admin.showToast(`토큰 생성 실패: ${error.message}`, 'error');
+            } finally {
+                btn.classList.remove('loading');
+                btn.textContent = '테스트 토큰 생성';
+            }
+        }
+        
+        function initKakaoMap() {
+            admin.loadKakaoMapScript();
+        }
+        
+        window.onload = () => {
+            admin = new AdminDashboard();
+        };
+    </script>
+</body>
+</html>
