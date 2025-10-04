@@ -1,4 +1,4 @@
-import os, asyncio, time, json, re
+import os, asyncio, time, json, re, base64
 from typing import List, Optional, Dict, Any
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Body, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -9,15 +9,14 @@ from dotenv import load_dotenv
 import sqlite3
 from datetime import datetime, timedelta
 from contextlib import asynccontextmanager
-import torch
-from transformers import AutoTokenizer, AutoModelForTokenClassification
-import numpy as np
 
 load_dotenv()
 SAFE182_ESNTL_ID = os.getenv("SAFE182_ESNTL_ID", "")
 SAFE182_AUTH_KEY = os.getenv("SAFE182_AUTH_KEY", "")
-KAKAO_REST_KEY = os.getenv("KAKAO_REST_KEY", "")
+KAKAO_JAVASCRIPT_KEY = os.getenv("KAKAO_JAVASCRIPT_KEY", "")
 FIREBASE_CREDENTIALS = os.getenv("FIREBASE_CREDENTIALS", "")
+ITS_CCTV_API_KEY = os.getenv("ITS_CCTV_API_KEY", "")
+NER_SERVER_URL = "http://localhost:8000"
 
 class MissingPerson(BaseModel):
     id: str
@@ -27,13 +26,16 @@ class MissingPerson(BaseModel):
     location: Optional[str] = None
     description: Optional[str] = None
     photo_url: Optional[str] = None
+    photo_base64: Optional[str] = None
     priority: str = "MEDIUM"
     risk_factors: List[str] = []
     ner_entities: Dict[str, List[str]] = {}
+    extracted_features: Dict[str, List[str]] = {}
     lat: float = 36.5
     lng: float = 127.8
     created_at: str = ""
     status: str = "ACTIVE"
+    category: Optional[str] = None
 
 class NotificationRequest(BaseModel):
     person: MissingPerson
@@ -49,6 +51,11 @@ class SightingReport(BaseModel):
     person_id: str
     reporter_location: Dict[str, float]
     timestamp: str
+
+class CCTVRequest(BaseModel):
+    lat: float
+    lng: float
+    radius: int = 1000
 
 class ConnectionManager:
     def __init__(self):
@@ -77,188 +84,6 @@ class ConnectionManager:
         
         for conn in disconnected:
             self.disconnect(conn)
-
-class KPFBertNER:
-    def __init__(self):
-        self.model = None
-        self.tokenizer = None
-        self.labels = [
-            'O',
-            'B-TMM_DISEASE', 'I-TMM_DISEASE',
-            'B-TMM_DRUG', 'I-TMM_DRUG',
-            'B-CV_CLOTHING', 'I-CV_CLOTHING',
-            'B-TM_COLOR', 'I-TM_COLOR',
-            'B-QT_AGE', 'I-QT_AGE',
-            'B-LCP_CITY', 'I-LCP_CITY',
-            'B-LCP_COUNTY', 'I-LCP_COUNTY',
-            'B-AF_TRANSPORT', 'I-AF_TRANSPORT',
-        ]
-        self.label2id = {label: i for i, label in enumerate(self.labels)}
-        self.id2label = {i: label for label, i in self.label2id.items()}
-        self.load_model()
-    
-    def load_model(self):
-        try:
-            model_name = "klue/bert-base"
-            self.tokenizer = AutoTokenizer.from_pretrained(model_name)
-            self.model = AutoModelForTokenClassification.from_pretrained(
-                model_name, 
-                num_labels=len(self.labels)
-            )
-            print("KPF-BERT-NER 모델 로드 완료")
-        except Exception as e:
-            print(f"모델 로드 실패, 백업 키워드 방식 사용: {e}")
-            self.model = None
-    
-    def extract_entities(self, text: str) -> Dict[str, List[str]]:
-        if not text or not self.model:
-            return self._fallback_keyword_extraction(text)
-        
-        try:
-            inputs = self.tokenizer(
-                text, 
-                truncation=True, 
-                padding=True, 
-                return_tensors="pt",
-                max_length=512
-            )
-            
-            with torch.no_grad():
-                outputs = self.model(**inputs)
-                predictions = torch.argmax(outputs.logits, dim=-1)
-            
-            tokens = self.tokenizer.convert_ids_to_tokens(inputs["input_ids"][0])
-            predictions = predictions[0].tolist()
-            
-            entities = self._parse_bio_tags(tokens, predictions, text)
-            return entities
-            
-        except Exception as e:
-            print(f"NER 처리 오류: {e}")
-            return self._fallback_keyword_extraction(text)
-    
-    def _parse_bio_tags(self, tokens: List[str], predictions: List[int], original_text: str) -> Dict[str, List[str]]:
-        entities = {
-            "diseases": [],
-            "drugs": [],
-            "clothing": [],
-            "colors": [],
-            "ages": [],
-            "locations": [],
-            "transport": []
-        }
-        
-        current_entity = None
-        current_text = []
-        
-        for token, pred_id in zip(tokens, predictions):
-            if token.startswith('##'):
-                continue
-            
-            label = self.id2label[pred_id]
-            
-            if label.startswith('B-'):
-                if current_entity:
-                    self._add_entity(entities, current_entity, ' '.join(current_text))
-                
-                current_entity = label[2:]
-                current_text = [token]
-                
-            elif label.startswith('I-') and current_entity == label[2:]:
-                current_text.append(token)
-                
-            else:
-                if current_entity:
-                    self._add_entity(entities, current_entity, ' '.join(current_text))
-                current_entity = None
-                current_text = []
-        
-        if current_entity:
-            self._add_entity(entities, current_entity, ' '.join(current_text))
-        
-        return {k: list(set(v)) for k, v in entities.items() if v}
-    
-    def _add_entity(self, entities: dict, entity_type: str, text: str):
-        text = text.replace('▁', '').strip()
-        if not text:
-            return
-            
-        mapping = {
-            'TMM_DISEASE': 'diseases',
-            'TMM_DRUG': 'drugs',
-            'CV_CLOTHING': 'clothing',
-            'TM_COLOR': 'colors',
-            'QT_AGE': 'ages',
-            'LCP_CITY': 'locations',
-            'LCP_COUNTY': 'locations',
-            'AF_TRANSPORT': 'transport'
-        }
-        
-        key = mapping.get(entity_type)
-        if key and text not in entities[key]:
-            entities[key].append(text)
-    
-    def _fallback_keyword_extraction(self, text: str) -> Dict[str, List[str]]:
-        if not text:
-            return {}
-        
-        text = text.lower()
-        entities = {
-            "diseases": [],
-            "drugs": [],
-            "clothing": [],
-            "colors": [],
-            "locations": [],
-            "transport": []
-        }
-        
-        keywords = {
-            "diseases": ["치매", "알츠하이머", "파킨슨", "우울증", "조현병"],
-            "drugs": ["약", "복용", "투약", "의약품"],
-            "clothing": ["상의", "하의", "바지", "치마", "셔츠", "티셔츠", "모자"],
-            "colors": ["빨간", "파란", "노란", "검은", "흰", "회색"],
-            "locations": ["서울", "부산", "대구", "인천", "광주", "대전", "울산"],
-            "transport": ["휠체어", "지팡이", "보행기", "택시", "버스"]
-        }
-        
-        for category, keyword_list in keywords.items():
-            for keyword in keyword_list:
-                if keyword in text:
-                    entities[category].append(keyword)
-        
-        return {k: list(set(v)) for k, v in entities.items() if v}
-    
-    def extract_risk_factors(self, text: str, age: Optional[int] = None) -> List[str]:
-        risk_factors = []
-        
-        if age:
-            if age >= 80:
-                risk_factors.append("고령자(80세 이상)")
-            elif age >= 65:
-                risk_factors.append("고령자(65세 이상)")
-            elif age <= 10:
-                risk_factors.append("어린이(10세 이하)")
-            elif age <= 15:
-                risk_factors.append("청소년(15세 이하)")
-        
-        entities = self.extract_entities(text)
-        
-        if entities.get("diseases"):
-            for disease in entities["diseases"]:
-                if any(d in disease for d in ["치매", "알츠하이머"]):
-                    risk_factors.append("치매 관련 질환")
-                elif any(d in disease for d in ["우울증", "조현병"]):
-                    risk_factors.append("정신건강 관련")
-        
-        if entities.get("transport"):
-            for transport in entities["transport"]:
-                if any(t in transport for t in ["휠체어", "보행기", "지팡이"]):
-                    risk_factors.append("거동 불편")
-        
-        if entities.get("drugs"):
-            risk_factors.append("투약 중")
-        
-        return list(set(risk_factors))
 
 class OptimizedAPIManager:
     def __init__(self):
@@ -341,13 +166,15 @@ async def lifespan(app: FastAPI):
     else:
         print("Firebase 사용 불가 - FCM 기능 제한됨")
     
+    await check_ner_server()
+    
     polling_task = asyncio.create_task(start_optimized_polling())
     
     yield
     
     polling_task.cancel()
 
-app = FastAPI(title="최적화된 실시간 실종자 알림 시스템", lifespan=lifespan)
+app = FastAPI(title="실종자 요청 처리 시스템", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -357,15 +184,30 @@ app.add_middleware(
 )
 
 manager = ConnectionManager()
-ner_model = KPFBertNER()
 api_manager = OptimizedAPIManager()
 
 SAFE_URL = "https://www.safe182.go.kr/api/lcm/amberList.do"
 KAKAO_GEO = "https://dapi.kakao.com/v2/local/search/address.json"
+ITS_CCTV_URL = "https://www.its.go.kr/opendata/bizdata/safdriveInfoSvc"
+
+async def check_ner_server():
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.get(f"{NER_SERVER_URL}/api/health")
+            if response.status_code == 200:
+                print("NER 서버 연결 확인됨")
+                return True
+    except Exception as e:
+        print(f"NER 서버 연결 실패: {e}")
+        print("ner_server.py를 먼저 실행해주세요")
+    return False
 
 async def init_database():
     conn = sqlite3.connect('missing_persons.db')
     cursor = conn.cursor()
+    
+    cursor.execute("PRAGMA table_info(missing_persons)")
+    columns = [column[1] for column in cursor.fetchall()]
     
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS missing_persons (
@@ -376,15 +218,48 @@ async def init_database():
             location TEXT,
             description TEXT,
             photo_url TEXT,
+            photo_base64 TEXT,
             priority TEXT,
             risk_factors TEXT,
             ner_entities TEXT,
+            extracted_features TEXT,
             lat REAL,
             lng REAL,
             created_at TEXT,
-            status TEXT DEFAULT 'ACTIVE'
+            status TEXT DEFAULT 'ACTIVE',
+            category TEXT
         )
     ''')
+    
+    try:
+        if 'photo_base64' not in columns:
+            cursor.execute('ALTER TABLE missing_persons ADD COLUMN photo_base64 TEXT')
+            print("photo_base64 컬럼이 추가되었습니다.")
+    except sqlite3.OperationalError as e:
+        if "duplicate column name" in str(e):
+            print("photo_base64 컬럼이 이미 존재합니다.")
+        else:
+            raise e
+    
+    try:
+        if 'extracted_features' not in columns:
+            cursor.execute('ALTER TABLE missing_persons ADD COLUMN extracted_features TEXT')
+            print("extracted_features 컬럼이 추가되었습니다.")
+    except sqlite3.OperationalError as e:
+        if "duplicate column name" in str(e):
+            print("extracted_features 컬럼이 이미 존재합니다.")
+        else:
+            raise e
+    
+    try:
+        if 'category' not in columns:
+            cursor.execute('ALTER TABLE missing_persons ADD COLUMN category TEXT')
+            print("category 컬럼이 추가되었습니다.")
+    except sqlite3.OperationalError as e:
+        if "duplicate column name" in str(e):
+            print("category 컬럼이 이미 존재합니다.")
+        else:
+            raise e
     
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS api_requests (
@@ -432,6 +307,7 @@ async def init_database():
     
     conn.commit()
     conn.close()
+    print("데이터베이스 초기화 및 마이그레이션이 완료되었습니다.")
 
 async def fetch_safe182_data():
     cached = api_manager.get_cached_data()
@@ -447,26 +323,101 @@ async def fetch_safe182_data():
         form = {
             "esntlId": SAFE182_ESNTL_ID,
             "authKey": SAFE182_AUTH_KEY,
-            "rowSize": "50",
+            "rowSize": "20",
             "page": "1",
             "occrde": time.strftime("%Y%m%d"),
         }
         
         try:
             print(f"Safe182 API 요청 ({time.strftime('%H:%M:%S')})")
+            print(f"요청 파라미터: rowSize={form['rowSize']}, page={form['page']}, occrde={form['occrde']}")
+            
             response = await client.post(SAFE_URL, data=form, timeout=30.0)
+            
+            if response.status_code != 200:
+                print(f"API 응답 오류: {response.status_code}")
+                return []
+            
             data = response.json()
             result = data.get("list", [])
+            
+            photo_stats = {"total": len(result), "has_photo": 0, "photo_lengths": []}
+            for item in result:
+                photo = item.get("tknphotoFile", "")
+                if photo:
+                    photo_stats["has_photo"] += 1
+                    photo_stats["photo_lengths"].append(len(photo))
+            
+            print(f"API 응답: {len(result)}개 항목")
+            print(f"사진 포함: {photo_stats['has_photo']}/{photo_stats['total']}개")
+            if photo_stats["photo_lengths"]:
+                avg_length = sum(photo_stats["photo_lengths"]) / len(photo_stats["photo_lengths"])
+                max_length = max(photo_stats["photo_lengths"])
+                min_length = min(photo_stats["photo_lengths"])
+                print(f"사진 길이: 평균 {avg_length:.0f}, 최대 {max_length}, 최소 {min_length}")
             
             api_manager.update_cache(result)
             await log_api_request(len(result), True)
             
-            print(f"API 응답: {len(result)}개 항목")
             return result
             
         except Exception as e:
             print(f"Safe182 API 오류: {e}")
             await log_api_request(0, False)
+            return []
+
+async def send_to_ner_server(raw_data_list: List[dict]):
+    try:
+        print(f"NER 서버로 {len(raw_data_list)}개 데이터 전송 중...")
+        
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            response = await client.post(
+                f"{NER_SERVER_URL}/api/process_missing_persons",
+                json={"raw_data_list": raw_data_list}
+            )
+            
+            if response.status_code == 200:
+                processed_data = response.json()
+                print(f"NER 서버에서 {len(processed_data)}개 데이터 처리 완료")
+                return processed_data
+            else:
+                print(f"NER 서버 응답 오류: {response.status_code}")
+                return []
+                
+    except Exception as e:
+        print(f"NER 서버 연결 오류: {e}")
+        return []
+
+async def fetch_cctv_data(lat: float, lng: float, radius: int = 1000):
+    if not ITS_CCTV_API_KEY:
+        print("ITS CCTV API 키가 설정되지 않았습니다")
+        return []
+    
+    async with httpx.AsyncClient() as client:
+        params = {
+            "apiKey": ITS_CCTV_API_KEY,
+            "type": "도로유형",
+            "cctvType": "실시간스트리밍",
+            "minX": lng - 0.01,
+            "maxX": lng + 0.01,
+            "minY": lat - 0.01,
+            "maxY": lat + 0.01,
+            "getType": "json"
+        }
+        
+        try:
+            print(f"ITS CCTV API 요청: lat={lat}, lng={lng}, radius={radius}")
+            response = await client.get(ITS_CCTV_URL, params=params, timeout=30.0)
+            
+            if response.status_code == 200:
+                data = response.json()
+                return data.get("data", [])
+            else:
+                print(f"CCTV API 오류: {response.status_code}")
+                return []
+                
+        except Exception as e:
+            print(f"CCTV API 요청 실패: {e}")
             return []
 
 async def log_api_request(result_count: int, success: bool):
@@ -488,7 +439,7 @@ async def geocode_address(address: str):
             response = await client.get(
                 KAKAO_GEO,
                 params={"query": address},
-                headers={"Authorization": f"KakaoAK {KAKAO_REST_KEY}"},
+                headers={"Authorization": f"KakaoAK {KAKAO_JAVASCRIPT_KEY}"},
                 timeout=10.0
             )
             data = response.json()
@@ -501,56 +452,22 @@ async def geocode_address(address: str):
     
     return {"lat": 36.5, "lng": 127.8}
 
-def process_missing_person(raw_data: dict) -> MissingPerson:
-    description = raw_data.get("etcSpfeatr", "")
-    
-    age = None
-    try:
-        age_value = raw_data.get("ageNow") or raw_data.get("age")
-        if age_value:
-            age = int(age_value)
-    except (ValueError, TypeError):
-        pass
-    
-    ner_entities = ner_model.extract_entities(description)
-    risk_factors = ner_model.extract_risk_factors(description, age)
-    
-    priority = "HIGH" if any([
-        age and (age >= 80 or age <= 10),
-        "치매 관련 질환" in risk_factors,
-        "정신건강 관련" in risk_factors,
-        "거동 불편" in risk_factors
-    ]) else "MEDIUM"
-    
-    return MissingPerson(
-        id=str(raw_data.get("msspsnIdntfccd", f"temp_{int(time.time())}")),
-        name=raw_data.get("nm"),
-        age=age,
-        gender=raw_data.get("sexdstnDscd"),
-        location=raw_data.get("occrAdres"),
-        description=description,
-        photo_url=None,
-        priority=priority,
-        risk_factors=risk_factors,
-        ner_entities=ner_entities,
-        created_at=datetime.now().isoformat()
-    )
-
 def save_missing_person(person: MissingPerson):
     conn = sqlite3.connect('missing_persons.db')
     cursor = conn.cursor()
     
     cursor.execute('''
         INSERT OR REPLACE INTO missing_persons 
-        (id, name, age, gender, location, description, photo_url, priority, 
-         risk_factors, ner_entities, lat, lng, created_at, status)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        (id, name, age, gender, location, description, photo_url, photo_base64, priority, 
+         risk_factors, ner_entities, extracted_features, lat, lng, created_at, status, category)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ''', (
         person.id, person.name, person.age, person.gender, person.location,
-        person.description, person.photo_url, person.priority,
+        person.description, person.photo_url, person.photo_base64, person.priority,
         json.dumps(person.risk_factors, ensure_ascii=False),
         json.dumps(person.ner_entities, ensure_ascii=False),
-        person.lat, person.lng, person.created_at, person.status
+        json.dumps(person.extracted_features, ensure_ascii=False),
+        person.lat, person.lng, person.created_at, person.status, person.category
     ))
     
     conn.commit()
@@ -600,9 +517,11 @@ async def send_fcm_notification(person: MissingPerson, tokens: List[str] = None)
                         "age": str(person.age or 0),
                         "location": person.location or "",
                         "priority": person.priority,
+                        "category": person.category or "",
                         "risk_factors": json.dumps(person.risk_factors, ensure_ascii=False),
                         "lat": str(person.lat),
-                        "lng": str(person.lng)
+                        "lng": str(person.lng),
+                        "photo_url": person.photo_url or ""
                     },
                     android=firebase_messaging.AndroidConfig(
                         notification=firebase_messaging.AndroidNotification(
@@ -673,10 +592,23 @@ async def start_optimized_polling():
             print(f"[{datetime.now().strftime('%H:%M:%S')}] 실종자 데이터 확인 중...")
             
             raw_data_list = await fetch_safe182_data()
+            
+            if not raw_data_list:
+                print("Safe182 API에서 데이터를 가져오지 못했습니다.")
+                await asyncio.sleep(300)
+                continue
+            
+            processed_data = await send_to_ner_server(raw_data_list)
+            
+            if not processed_data:
+                print("NER 서버에서 데이터 처리에 실패했습니다.")
+                await asyncio.sleep(300)
+                continue
+            
             new_persons = []
             
-            for raw_data in raw_data_list:
-                person = process_missing_person(raw_data)
+            for person_data in processed_data:
+                person = MissingPerson(**person_data)
                 
                 if person.id not in existing_ids:
                     coord = await geocode_address(person.location)
@@ -765,6 +697,37 @@ async def get_test_tokens():
     conn.close()
     return {"tokens": tokens}
 
+@app.post("/api/search_cctv")
+async def search_cctv(request: CCTVRequest):
+    try:
+        cctv_data = await fetch_cctv_data(request.lat, request.lng, request.radius)
+        
+        processed_cctvs = []
+        for cctv in cctv_data:
+            processed_cctv = {
+                "id": cctv.get("roadsectionid", f"cctv_{len(processed_cctvs)}"),
+                "name": cctv.get("cctvname", "CCTV"),
+                "address": f"{cctv.get('coordy', '')}, {cctv.get('coordx', '')}",
+                "distance": 0,
+                "status": "정상" if cctv.get("cctvresolution") else "점검중",
+                "type": cctv.get("cctvtype", "교통감시"),
+                "operator": "한국도로공사",
+                "streamUrl": cctv.get("cctvurl", ""),
+                "coords": {
+                    "lat": float(cctv.get("coordy", 0)),
+                    "lng": float(cctv.get("coordx", 0))
+                },
+                "resolution": cctv.get("cctvresolution", ""),
+                "format": cctv.get("cctvformat", "")
+            }
+            processed_cctvs.append(processed_cctv)
+        
+        return {"cctvs": processed_cctvs, "count": len(processed_cctvs)}
+        
+    except Exception as e:
+        print(f"CCTV 검색 오류: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.post("/api/report_sighting")
 async def report_sighting(request: SightingReport):
     try:
@@ -817,12 +780,56 @@ async def get_missing_persons():
     persons = []
     for row in rows:
         person_dict = dict(zip(columns, row))
-        person_dict['risk_factors'] = json.loads(person_dict['risk_factors'] or '[]')
-        person_dict['ner_entities'] = json.loads(person_dict['ner_entities'] or '{}')
+        
+        person_dict['risk_factors'] = json.loads(person_dict.get('risk_factors') or '[]')
+        person_dict['ner_entities'] = json.loads(person_dict.get('ner_entities') or '{}')
+        
+        if 'extracted_features' in person_dict:
+            person_dict['extracted_features'] = json.loads(person_dict.get('extracted_features') or '{}')
+        else:
+            person_dict['extracted_features'] = {}
+        
+        if 'category' not in person_dict:
+            person_dict['category'] = '기타'
+        
+        if 'photo_base64' not in person_dict:
+            person_dict['photo_base64'] = None
+            
         persons.append(person_dict)
     
     conn.close()
     return {"data": persons, "count": len(persons)}
+
+@app.get("/api/person/{person_id}")
+async def get_person_detail(person_id: str):
+    conn = sqlite3.connect('missing_persons.db')
+    cursor = conn.cursor()
+    
+    cursor.execute('SELECT * FROM missing_persons WHERE id = ?', (person_id,))
+    row = cursor.fetchone()
+    
+    if not row:
+        raise HTTPException(status_code=404, detail="실종자를 찾을 수 없습니다")
+    
+    columns = [desc[0] for desc in cursor.description]
+    person_dict = dict(zip(columns, row))
+    
+    person_dict['risk_factors'] = json.loads(person_dict.get('risk_factors') or '[]')
+    person_dict['ner_entities'] = json.loads(person_dict.get('ner_entities') or '{}')
+    
+    if 'extracted_features' in person_dict:
+        person_dict['extracted_features'] = json.loads(person_dict.get('extracted_features') or '{}')
+    else:
+        person_dict['extracted_features'] = {}
+    
+    if 'category' not in person_dict:
+        person_dict['category'] = '기타'
+    
+    if 'photo_base64' not in person_dict:
+        person_dict['photo_base64'] = None
+    
+    conn.close()
+    return person_dict
 
 @app.get("/api/statistics")
 async def get_statistics():
@@ -860,6 +867,7 @@ async def get_statistics():
         "today_notifications": today_notifications,
         "today_fcm_success": today_fcm_success,
         "firebase_status": "활성" if firebase_admin else "비활성",
+        "ner_server_status": "활성",
         "next_request_in_seconds": time_until_next,
         "api_limit_status": f"{today_requests}/288 (일일 제한 내)"
     }
@@ -890,10 +898,68 @@ async def get_active_tokens_api():
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.post("/api/force_update")
+async def force_update():
+    try:
+        print("수동 업데이트 요청")
+        
+        raw_data_list = await fetch_safe182_data()
+        if not raw_data_list:
+            return {"status": "error", "message": "Safe182 API에서 데이터를 가져올 수 없습니다"}
+        
+        processed_data = await send_to_ner_server(raw_data_list)
+        if not processed_data:
+            return {"status": "error", "message": "NER 서버에서 데이터 처리에 실패했습니다"}
+        
+        existing_ids = get_existing_person_ids()
+        new_count = 0
+        updated_count = 0
+        
+        for person_data in processed_data:
+            person = MissingPerson(**person_data)
+            
+            coord = await geocode_address(person.location)
+            person.lat = coord["lat"]
+            person.lng = coord["lng"]
+            
+            if person.id not in existing_ids:
+                new_count += 1
+            else:
+                updated_count += 1
+            
+            save_missing_person(person)
+        
+        return {
+            "status": "success", 
+            "message": f"업데이트 완료: 신규 {new_count}명, 갱신 {updated_count}명",
+            "new": new_count,
+            "updated": updated_count
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"업데이트 실패: {str(e)}")
+
 @app.get("/")
 async def get_admin_dashboard():
-    return HTMLResponse(open("dashboard.html", "r", encoding="utf-8").read())
+    if not KAKAO_JAVASCRIPT_KEY:
+        print("경고: KAKAO_JAVASCRIPT_KEY가 설정되지 않았습니다. .env 파일을 확인하세요.")
+        kakao_key = "YOUR_KAKAO_API_KEY"
+    else:
+        kakao_key = KAKAO_JAVASCRIPT_KEY
+    
+    try:
+        with open("dashboard.html", "r", encoding="utf-8") as f:
+            html_content = f.read()
+        
+        html_content = html_content.replace("YOUR_KAKAO_API_KEY", kakao_key)
+        
+        return HTMLResponse(html_content)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="dashboard.html 파일을 찾을 수 없습니다")
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000, reload=False)
+    print("실종자 요청 처리 서버를 시작합니다 (포트 8001)")
+    print("먼저 ner_server.py (포트 8000)가 실행되어 있는지 확인하세요")
+    print(f"카카오 JavaScript 키 설정 상태: {'설정됨' if KAKAO_JAVASCRIPT_KEY else '미설정'}")
+    uvicorn.run(app, host="0.0.0.0", port=8001, reload=False)

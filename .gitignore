@@ -3,3 +3,6 @@ node_modules
 abc
 __pycache__
 missing_persons.db
+debug.py
+test.py
+firebase_key.json
